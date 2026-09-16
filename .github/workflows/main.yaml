@@ -166,9 +166,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-26
+          - os: macos-14
             arch: arm64
-          - os: macos-26-intel
+          - os: macos-14
             arch: x86_64
 
     steps:
@@ -204,7 +204,7 @@ jobs:
           brew --prefix qt@6
           ls "$(brew --prefix qt@6)/lib/cmake/Qt6/" || true
 
-      - name: Verify brew qt@6 detection (与 CMakeLists.txt 第36行的检测逻辑保持一致)
+      - name: Verify brew qt@6 detection
         run: |
           # CMakeLists.txt 里 APPLE 分支会执行 `brew --prefix qt@6`，
           # 这里提前用同样的命令验证一遍，如果这一步就失败，
