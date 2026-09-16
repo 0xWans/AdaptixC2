@@ -95,6 +95,21 @@ jobs:
           windeployqt.exe AdaptixClient.exe
           
           echo "[4/4] Add extra DLLs..."
+
+          # 用 ntldd 自动扫描 exe 实际依赖的所有 mingw64 DLL，
+          # 自动补全，避免每次都要手动排查缺了哪个 DLL
+          pacman -S --noconfirm --needed mingw-w64-x86_64-ntldd 2>/dev/null || true
+          if command -v ntldd &> /dev/null; then
+            ntldd -R AdaptixClient.exe 2>/dev/null | \
+              grep -i "mingw64" | \
+              awk '{print $3}' | \
+              sort -u | \
+              while read -r dllpath; do
+                [ -f "$dllpath" ] && cp -n "$dllpath" . || true
+              done
+          fi
+
+          # 下面是兜底列表，防止 ntldd 漏检或未安装成功
           # 基础运行时
           cp /mingw64/bin/libwinpthread-1.dll . || true
           cp /mingw64/bin/libgcc_s_seh-1.dll . || true
@@ -124,7 +139,14 @@ jobs:
           cp /mingw64/bin/libicuin*.dll . || true
           cp /mingw64/bin/libicuuc*.dll . || true
           cp /mingw64/bin/libicudt*.dll . || true
-          
+
+          # 压缩 / glib 相关（Qt 部分模块间接依赖）
+          cp /mingw64/bin/libzstd.dll . || true
+          cp /mingw64/bin/libbz2-1.dll . || true
+          cp /mingw64/bin/libglib-2.0-0.dll . || true
+          cp /mingw64/bin/liblzma-5.dll . || true
+          cp /mingw64/bin/libssp-0.dll . || true
+
           echo "[OK] Complete!"
           ls -la
 
@@ -144,9 +166,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-26
             arch: arm64
-          - os: macos-13
+          - os: macos-26-intel
             arch: x86_64
 
     steps:
