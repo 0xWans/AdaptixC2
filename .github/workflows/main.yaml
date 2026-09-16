@@ -157,32 +157,38 @@ jobs:
             /opt/homebrew/Cellar
             /opt/homebrew/opt
             /usr/local/opt
-          key: homebrew-qt-lite-${{ matrix.arch }}-${{ hashFiles('.github/workflows/*.yml') }}
+          key: homebrew-qt6-official-${{ matrix.arch }}-${{ hashFiles('.github/workflows/*.yml') }}
           restore-keys: |
-            homebrew-qt-lite-${{ matrix.arch }}-
+            homebrew-qt6-official-${{ matrix.arch }}-
 
-      - name: Install dependencies (轻量，避免 qtwebengine)
+      - name: Install dependencies (官方方式)
         run: |
           brew update
-          brew install make cmake openssl
           
-          # 优先安装独立模块，避免完整 qt@6 拉入 qtwebengine
-          brew install qtbase qtdeclarative qtsvg qtwebsockets qttools || \
-          brew install qt@6
+          # 先检查并卸载可能存在的冲突包
+          for pkg in qt@6 qtbase qtdeclarative qtsvg qtwebsockets qttools qt; do
+            if brew list --versions $pkg &>/dev/null; then
+              echo "Uninstalling $pkg ..."
+              brew uninstall --ignore-dependencies $pkg || true
+            fi
+          done
+          
+          # 按官方文档安装
+          brew install make cmake openssl qt@6
+          
+          # 验证安装结果
+          echo "=== Qt@6 安装路径 ==="
+          brew --prefix qt@6
+          ls "$(brew --prefix qt@6)/lib/cmake/Qt6/" || true
 
       - name: Build Client
         run: |
-          # 自动寻找 Qt 路径
-          if [ -d "$(brew --prefix qt@6 2>/dev/null)" ]; then
-            export PATH="$(brew --prefix qt@6)/bin:$PATH"
-            export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
-          else
-            export PATH="$(brew --prefix qtbase)/bin:$PATH"
-            export CMAKE_PREFIX_PATH="$(brew --prefix qtbase)"
-          fi
+          export PATH="$(brew --prefix qt@6)/bin:$PATH"
+          export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
           
           echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
-          which qmake || true
+          which qmake
+          qmake --version || true
           
           make client-fast
           
