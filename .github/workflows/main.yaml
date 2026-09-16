@@ -221,15 +221,57 @@ jobs:
           export PATH="$(brew --prefix qt@6)/bin:$PATH"
           export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
 
+          # 关键：设置部署目标版本，避免编译出的二进制要求比你本机更新的 macOS。
+          # 13.0 能兼容到 macOS Ventura 及以上（含你的 Intel Mac）。
+          # CMake 会读取这个环境变量来设置 CMAKE_OSX_DEPLOYMENT_TARGET。
+          export MACOSX_DEPLOYMENT_TARGET=13.0
+
           echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
+          echo "MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
           which qmake
           qmake --version || true
 
           make client-fast
 
+          echo "[Deploy] AdaptixClient 是裸可执行文件（没有 MACOSX_BUNDLE），"
+          echo "         动态链接的是 CI 机器上 Homebrew 的绝对路径，"
+          echo "         直接分发会导致 dyld: Library not loaded。"
+          echo "         这里把它包成标准 .app bundle，再用 macdeployqt 打包 Qt 依赖，"
+          echo "         让产物在没装 Homebrew Qt 的机器上也能独立运行。"
+
+          # make client-fast 执行完后，二进制已经被 Makefile 挪到了仓库根目录的 dist/ 下
+          ls -la dist/
+
+          BUNDLE="dist/AdaptixClient.app"
+          rm -rf "$BUNDLE"
+          mkdir -p "$BUNDLE/Contents/MacOS"
+          cp dist/AdaptixClient "$BUNDLE/Contents/MacOS/AdaptixClient"
+
+          cat > "$BUNDLE/Contents/Info.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>AdaptixClient</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.adaptixframework.adaptixclient</string>
+              <key>CFBundleName</key>
+              <string>AdaptixClient</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>13.0</string>
+          </dict>
+          </plist>
+          EOF
+
+          macdeployqt "$BUNDLE" -always-overwrite
+
           mkdir -p dist-macos-${{ matrix.arch }}
-          cp -r dist/* dist-macos-${{ matrix.arch }}/ 2>/dev/null || true
-          cp -r AdaptixClient/AdaptixClient.app dist-macos-${{ matrix.arch }}/ 2>/dev/null || true
+          cp -r "$BUNDLE" dist-macos-${{ matrix.arch }}/
           ls -la dist-macos-${{ matrix.arch }}/
 
       - name: Upload macOS Client
