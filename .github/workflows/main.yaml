@@ -5,15 +5,15 @@ on:
     branches: [ testing-v2.0 ]
   pull_request:
     branches: [ testing-v2.0 ]
-  workflow_dispatch:          # 仍然支持手动触发
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  # ==================== Linux ====================
+  # ==================== Linux (只构建 Server + Extenders) ====================
   build-linux:
-    name: Build Linux (Server + Extenders + Client)
+    name: Build Linux Server + Extenders
     runs-on: ubuntu-24.04
 
     steps:
@@ -32,20 +32,13 @@ jobs:
             ${{ runner.os }}-buildx-
 
       - name: Build Server + Extenders
-        run: |
-          make docker-build-server-ext
-
-      - name: Build Client
-        run: |
-          make docker-build-client
+        run: make docker-build-server-ext
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: adaptix-linux
-          path: |
-            AdaptixServer/server-dist/
-            AdaptixClient/client-dist/
+          name: adaptix-linux-server
+          path: AdaptixServer/server-dist/
           retention-days: 5
 
   # ==================== Windows Client ====================
@@ -61,7 +54,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:/msys64
-          key: msys2-mingw64-qt6-${{ hashFiles('.github/workflows/build-adaptixc2.yml') }}
+          key: msys2-mingw64-qt6-${{ hashFiles('.github/workflows/*.yml') }}
           restore-keys: |
             msys2-mingw64-qt6-
 
@@ -77,7 +70,6 @@ jobs:
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-qt6
             mingw-w64-x86_64-qt6-tools
-          # 如果已经有缓存，这个步骤会快很多
 
       - name: Build Client
         shell: msys2 {0}
@@ -99,22 +91,38 @@ jobs:
           windeployqt.exe AdaptixClient.exe
           
           echo "[4/4] Add extra DLLs..."
+          # 基础运行时
           cp /mingw64/bin/libwinpthread-1.dll . || true
           cp /mingw64/bin/libgcc_s_seh-1.dll . || true
           cp /mingw64/bin/libstdc++-6.dll . || true
+
+          # 图形 / 字体
           cp /mingw64/bin/libfreetype-6.dll . || true
           cp /mingw64/bin/libharfbuzz-0.dll . || true
           cp /mingw64/bin/libpng16-16.dll . || true
           cp /mingw64/bin/zlib1.dll . || true
+
+          # Brotli（解决 libbrotlidec.dll 缺失）
+          cp /mingw64/bin/libbrotlidec.dll . || true
+          cp /mingw64/bin/libbrotlicommon.dll . || true
+          cp /mingw64/bin/libbrotlienc.dll . || true
+
+          # 其他常见依赖
           cp /mingw64/bin/libpcre2-16-0.dll . || true
           cp /mingw64/bin/libpcre2-8-0.dll . || true
           cp /mingw64/bin/libintl-8.dll . || true
           cp /mingw64/bin/libiconv-2.dll . || true
+          cp /mingw64/bin/libdouble-conversion.dll . || true
+          cp /mingw64/bin/libmd4c.dll . || true
+          cp /mingw64/bin/libb2-1.dll . || true
+
+          # ICU
           cp /mingw64/bin/libicuin*.dll . || true
           cp /mingw64/bin/libicuuc*.dll . || true
           cp /mingw64/bin/libicudt*.dll . || true
           
           echo "[OK] Complete!"
+          ls -la
 
       - name: Upload Windows Client
         uses: actions/upload-artifact@v4
@@ -147,26 +155,41 @@ jobs:
             ~/Library/Caches/Homebrew
             /usr/local/Cellar
             /opt/homebrew/Cellar
-          key: homebrew-qt6-${{ matrix.arch }}-${{ hashFiles('.github/workflows/build-adaptixc2.yml') }}
+            /opt/homebrew/opt
+            /usr/local/opt
+          key: homebrew-qt-lite-${{ matrix.arch }}-${{ hashFiles('.github/workflows/*.yml') }}
           restore-keys: |
-            homebrew-qt6-${{ matrix.arch }}-
+            homebrew-qt-lite-${{ matrix.arch }}-
 
-      - name: Install dependencies
+      - name: Install dependencies (轻量，避免 qtwebengine)
         run: |
           brew update
-          brew install make cmake openssl qt@6 || true
-          # 如果缓存命中，安装会很快
+          brew install make cmake openssl
+          
+          # 优先安装独立模块，避免完整 qt@6 拉入 qtwebengine
+          brew install qtbase qtdeclarative qtsvg qtwebsockets qttools || \
+          brew install qt@6
 
       - name: Build Client
         run: |
-          export PATH="$(brew --prefix qt@6)/bin:$PATH"
-          export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
+          # 自动寻找 Qt 路径
+          if [ -d "$(brew --prefix qt@6 2>/dev/null)" ]; then
+            export PATH="$(brew --prefix qt@6)/bin:$PATH"
+            export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
+          else
+            export PATH="$(brew --prefix qtbase)/bin:$PATH"
+            export CMAKE_PREFIX_PATH="$(brew --prefix qtbase)"
+          fi
+          
+          echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
+          which qmake || true
           
           make client-fast
           
           mkdir -p dist-macos-${{ matrix.arch }}
           cp -r dist/* dist-macos-${{ matrix.arch }}/ 2>/dev/null || true
           cp -r AdaptixClient/AdaptixClient.app dist-macos-${{ matrix.arch }}/ 2>/dev/null || true
+          ls -la dist-macos-${{ matrix.arch }}/
 
       - name: Upload macOS Client
         uses: actions/upload-artifact@v4
@@ -180,7 +203,7 @@ jobs:
     name: Create Release
     needs: [build-linux, build-windows-client, build-macos-client]
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+    if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/testing-v2.0' && github.event_name == 'push')
 
     steps:
       - name: Download all artifacts
@@ -192,8 +215,8 @@ jobs:
         run: |
           mkdir -p release
 
-          if [ -d artifacts/adaptix-linux ]; then
-            (cd artifacts/adaptix-linux && zip -r ../../release/AdaptixC2-Linux.zip .)
+          if [ -d artifacts/adaptix-linux-server ]; then
+            (cd artifacts/adaptix-linux-server && zip -r ../../release/AdaptixC2-Linux-Server.zip .)
           fi
 
           if [ -d artifacts/adaptix-client-windows ]; then
@@ -214,12 +237,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: AdaptixC2 Build #${{ github.run_number }}
+          name: AdaptixC2 Build #${{ github.run_number }} (testing-v2.0)
           body: |
-            自动构建产物（已启用缓存）
+            构建分支: `testing-v2.0`
             
-            - **Linux**: Server + Extenders + Client
-            - **Windows**: Client
+            包含内容：
+            - **Linux**: Server + Extenders
+            - **Windows**: Client（已包含 Brotli 等依赖）
             - **macOS**: Client (ARM64 + x86_64)
           files: release/*.zip
           draft: false
