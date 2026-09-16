@@ -15,6 +15,7 @@ jobs:
   build-linux:
     name: Build Linux Server + Extenders
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -45,6 +46,7 @@ jobs:
   build-windows-client:
     name: Build Windows Client
     runs-on: windows-latest
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
@@ -54,7 +56,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:/msys64
-          key: msys2-mingw64-qt6-${{ hashFiles('.github/workflows/*.yml') }}
+          # 用固定字符串 + 依赖包名而不是整个 workflow 文件的 hash，
+          # 避免改动 yml 中其它 job 时误使缓存失效
+          key: msys2-mingw64-qt6-v1
           restore-keys: |
             msys2-mingw64-qt6-
 
@@ -95,31 +99,46 @@ jobs:
           cp /mingw64/bin/libwinpthread-1.dll . || true
           cp /mingw64/bin/libgcc_s_seh-1.dll . || true
           cp /mingw64/bin/libstdc++-6.dll . || true
-
-          # 图形 / 字体
+          
+          # 字体 / 文本渲染
           cp /mingw64/bin/libfreetype-6.dll . || true
           cp /mingw64/bin/libharfbuzz-0.dll . || true
+          cp /mingw64/bin/libgraphite2.dll . || true
+          cp /mingw64/bin/libmd4c.dll . || true
+          
+          # 图像 / 压缩
           cp /mingw64/bin/libpng16-16.dll . || true
           cp /mingw64/bin/zlib1.dll . || true
-
-          # Brotli（解决 libbrotlidec.dll 缺失）
+          cp /mingw64/bin/libzstd.dll . || true
+          cp /mingw64/bin/libbz2-1.dll . || true
+          cp /mingw64/bin/libbz2.dll . || true
           cp /mingw64/bin/libbrotlidec.dll . || true
           cp /mingw64/bin/libbrotlicommon.dll . || true
-          cp /mingw64/bin/libbrotlienc.dll . || true
-
-          # 其他常见依赖
-          cp /mingw64/bin/libpcre2-16-0.dll . || true
-          cp /mingw64/bin/libpcre2-8-0.dll . || true
-          cp /mingw64/bin/libintl-8.dll . || true
-          cp /mingw64/bin/libiconv-2.dll . || true
-          cp /mingw64/bin/libdouble-conversion.dll . || true
-          cp /mingw64/bin/libmd4c.dll . || true
+          
+          # 工具库
           cp /mingw64/bin/libb2-1.dll . || true
-
+          cp /mingw64/bin/libdouble-conversion.dll . || true
+          
           # ICU
           cp /mingw64/bin/libicuin*.dll . || true
           cp /mingw64/bin/libicuuc*.dll . || true
           cp /mingw64/bin/libicudt*.dll . || true
+          
+          # 正则 / 国际化
+          cp /mingw64/bin/libpcre2-16-0.dll . || true
+          cp /mingw64/bin/libpcre2-8-0.dll . || true
+          cp /mingw64/bin/libpcre-1.dll . || true
+          cp /mingw64/bin/libintl-8.dll . || true
+          cp /mingw64/bin/libiconv-2.dll . || true
+          
+          # GLib
+          cp /mingw64/bin/libglib-2.0-0.dll . || true
+          cp /mingw64/bin/libgobject-2.0-0.dll . || true
+          cp /mingw64/bin/libgio-2.0-0.dll . || true
+          cp /mingw64/bin/libgmodule-2.0-0.dll . || true
+          
+          # 其他可能缺的
+          cp /mingw64/bin/libffi-8.dll . || true
           
           echo "[OK] Complete!"
           ls -la
@@ -135,63 +154,55 @@ jobs:
   build-macos-client:
     name: Build macOS Client (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-14
             arch: arm64
+            qt_arch: clang_64
           - os: macos-13
             arch: x86_64
+            qt_arch: clang_64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache Homebrew
-        uses: actions/cache@v4
+      # 用 aqtinstall（jurplel/install-qt-action）替代 brew install qt@6。
+      # brew 装 Qt6 是从源码构建/大体积 bottle，且首次运行缓存必然 miss，
+      # 经常要 40-60 分钟；aqtinstall 直接拉取 Qt 官方预编译包，
+      # 自带缓存逻辑，通常几分钟就能装完。
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
         with:
-          path: |
-            ~/Library/Caches/Homebrew
-            /usr/local/Cellar
-            /opt/homebrew/Cellar
-            /opt/homebrew/opt
-            /usr/local/opt
-          key: homebrew-qt6-official-${{ matrix.arch }}-${{ hashFiles('.github/workflows/*.yml') }}
-          restore-keys: |
-            homebrew-qt6-official-${{ matrix.arch }}-
+          version: '6.7.3'
+          host: 'mac'
+          target: 'desktop'
+          arch: ${{ matrix.qt_arch }}
+          cache: true
+          cache-key-prefix: 'qt6-${{ matrix.arch }}'
 
-      - name: Install dependencies (官方方式)
+      - name: Install remaining dependencies
         run: |
-          brew update
-          
-          # 先检查并卸载可能存在的冲突包
-          for pkg in qt@6 qtbase qtdeclarative qtsvg qtwebsockets qttools qt; do
-            if brew list --versions $pkg &>/dev/null; then
-              echo "Uninstalling $pkg ..."
-              brew uninstall --ignore-dependencies $pkg || true
-            fi
-          done
-          
-          # 按官方文档安装
-          brew install make cmake openssl qt@6
-          
-          # 验证安装结果
-          echo "=== Qt@6 安装路径 ==="
-          brew --prefix qt@6
-          ls "$(brew --prefix qt@6)/lib/cmake/Qt6/" || true
+          # 跳过 brew update 索引刷新，跳过安装清理步骤，节省时间
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_INSTALL_CLEANUP=1
+          # qt@6 已经由 install-qt-action 提供，这里只装剩余构建工具
+          brew install make cmake openssl
 
       - name: Build Client
         run: |
-          export PATH="$(brew --prefix qt@6)/bin:$PATH"
-          export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
-          
+          # QT_ROOT_DIR / Qt6_DIR 等环境变量由 install-qt-action 自动设置
+          export CMAKE_PREFIX_PATH="${QT_ROOT_DIR}:$CMAKE_PREFIX_PATH"
+
           echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
           which qmake
           qmake --version || true
-          
+
           make client-fast
-          
+
           mkdir -p dist-macos-${{ matrix.arch }}
           cp -r dist/* dist-macos-${{ matrix.arch }}/ 2>/dev/null || true
           cp -r AdaptixClient/AdaptixClient.app dist-macos-${{ matrix.arch }}/ 2>/dev/null || true
