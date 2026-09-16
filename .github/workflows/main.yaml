@@ -99,46 +99,31 @@ jobs:
           cp /mingw64/bin/libwinpthread-1.dll . || true
           cp /mingw64/bin/libgcc_s_seh-1.dll . || true
           cp /mingw64/bin/libstdc++-6.dll . || true
-          
-          # 字体 / 文本渲染
+
+          # 图形 / 字体
           cp /mingw64/bin/libfreetype-6.dll . || true
           cp /mingw64/bin/libharfbuzz-0.dll . || true
-          cp /mingw64/bin/libgraphite2.dll . || true
-          cp /mingw64/bin/libmd4c.dll . || true
-          
-          # 图像 / 压缩
           cp /mingw64/bin/libpng16-16.dll . || true
           cp /mingw64/bin/zlib1.dll . || true
-          cp /mingw64/bin/libzstd.dll . || true
-          cp /mingw64/bin/libbz2-1.dll . || true
-          cp /mingw64/bin/libbz2.dll . || true
+
+          # Brotli（解决 libbrotlidec.dll 缺失）
           cp /mingw64/bin/libbrotlidec.dll . || true
           cp /mingw64/bin/libbrotlicommon.dll . || true
-          
-          # 工具库
-          cp /mingw64/bin/libb2-1.dll . || true
+          cp /mingw64/bin/libbrotlienc.dll . || true
+
+          # 其他常见依赖
+          cp /mingw64/bin/libpcre2-16-0.dll . || true
+          cp /mingw64/bin/libpcre2-8-0.dll . || true
+          cp /mingw64/bin/libintl-8.dll . || true
+          cp /mingw64/bin/libiconv-2.dll . || true
           cp /mingw64/bin/libdouble-conversion.dll . || true
-          
+          cp /mingw64/bin/libmd4c.dll . || true
+          cp /mingw64/bin/libb2-1.dll . || true
+
           # ICU
           cp /mingw64/bin/libicuin*.dll . || true
           cp /mingw64/bin/libicuuc*.dll . || true
           cp /mingw64/bin/libicudt*.dll . || true
-          
-          # 正则 / 国际化
-          cp /mingw64/bin/libpcre2-16-0.dll . || true
-          cp /mingw64/bin/libpcre2-8-0.dll . || true
-          cp /mingw64/bin/libpcre-1.dll . || true
-          cp /mingw64/bin/libintl-8.dll . || true
-          cp /mingw64/bin/libiconv-2.dll . || true
-          
-          # GLib
-          cp /mingw64/bin/libglib-2.0-0.dll . || true
-          cp /mingw64/bin/libgobject-2.0-0.dll . || true
-          cp /mingw64/bin/libgio-2.0-0.dll . || true
-          cp /mingw64/bin/libgmodule-2.0-0.dll . || true
-          
-          # 其他可能缺的
-          cp /mingw64/bin/libffi-8.dll . || true
           
           echo "[OK] Complete!"
           ls -la
@@ -161,41 +146,58 @@ jobs:
         include:
           - os: macos-14
             arch: arm64
-            qt_arch: clang_64
           - os: macos-13
             arch: x86_64
-            qt_arch: clang_64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 用 aqtinstall（jurplel/install-qt-action）替代 brew install qt@6。
-      # brew 装 Qt6 是从源码构建/大体积 bottle，且首次运行缓存必然 miss，
-      # 经常要 40-60 分钟；aqtinstall 直接拉取 Qt 官方预编译包，
-      # 自带缓存逻辑，通常几分钟就能装完。
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
+      # AdaptixC2 的 CMakeLists.txt 是通过 `brew --prefix qt@6` 这类方式
+      # 硬编码检测 Homebrew 装的 Qt6，不认 aqtinstall / CMAKE_PREFIX_PATH，
+      # 所以这里必须用 brew 装 qt@6，不能换成 install-qt-action。
+      # 真正的慢点是 `brew update` 索引刷新 + 每次重新下载 bottle，
+      # 这里改为缓存 Homebrew 的下载缓存目录（只是文件，没有符号链接问题），
+      # 这样重复运行时 brew install 会直接复用已下载的 bottle 包，
+      # 只做本地解压安装，跳过网络下载，速度提升明显。
+      - name: Cache Homebrew downloads
+        uses: actions/cache@v4
         with:
-          version: '6.7.3'
-          host: 'mac'
-          target: 'desktop'
-          arch: ${{ matrix.qt_arch }}
-          cache: true
-          cache-key-prefix: 'qt6-${{ matrix.arch }}'
+          path: ~/Library/Caches/Homebrew
+          key: brew-cache-qt6-${{ matrix.arch }}-v1
+          restore-keys: |
+            brew-cache-qt6-${{ matrix.arch }}-
 
-      - name: Install remaining dependencies
+      - name: Install dependencies (官方方式)
         run: |
-          # 跳过 brew update 索引刷新，跳过安装清理步骤，节省时间
           export HOMEBREW_NO_AUTO_UPDATE=1
           export HOMEBREW_NO_INSTALL_CLEANUP=1
-          # qt@6 已经由 install-qt-action 提供，这里只装剩余构建工具
-          brew install make cmake openssl
+
+          # brew install 本身是幂等的：已安装的包会直接跳过，
+          # 未安装的包会用上面缓存好的 bottle 快速解压安装，
+          # 不需要额外写检测逻辑
+          brew install make cmake openssl qt@6
+
+          echo "=== Qt@6 安装路径 ==="
+          brew --prefix qt@6
+          ls "$(brew --prefix qt@6)/lib/cmake/Qt6/" || true
+
+      - name: Verify brew qt@6 detection (与 CMakeLists.txt 第36行的检测逻辑保持一致)
+        run: |
+          # CMakeLists.txt 里 APPLE 分支会执行 `brew --prefix qt@6`，
+          # 这里提前用同样的命令验证一遍，如果这一步就失败，
+          # 说明 brew install 没有正确 link，能在这里就快速定位，
+          # 而不用等到 cmake 配置阶段才报 FATAL_ERROR
+          if ! brew --prefix qt@6 > /dev/null 2>&1; then
+            echo "[ERROR] brew --prefix qt@6 检测失败，尝试重新 link"
+            brew link --force qt@6 || brew link --overwrite qt@6
+            brew --prefix qt@6
+          fi
 
       - name: Build Client
         run: |
-          # QT_ROOT_DIR / Qt6_DIR 等环境变量由 install-qt-action 自动设置
-          export CMAKE_PREFIX_PATH="${QT_ROOT_DIR}:$CMAKE_PREFIX_PATH"
+          export PATH="$(brew --prefix qt@6)/bin:$PATH"
+          export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
 
           echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
           which qmake
