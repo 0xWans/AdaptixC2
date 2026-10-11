@@ -18,15 +18,34 @@ type Layout struct {
 }
 
 func Resolve(projectRootOrSpec string) (Layout, error) {
+	l, err := resolveLayout(projectRootOrSpec)
+	if err != nil {
+		return Layout{}, err
+	}
+	if _, err := os.Stat(l.ServerDir); err != nil {
+		return Layout{}, fmt.Errorf("server_dir %s: %w", l.ServerDir, err)
+	}
+	return l, nil
+}
+
+func ResolveRuntime(projectRootOrSpec string) (Layout, error) {
+	return resolveLayout(projectRootOrSpec)
+}
+
+func LayoutForSpec(srv spec.ServerSpec, root string) (Layout, error) {
+	return layoutFor(srv, root)
+}
+
+func resolveLayout(projectRootOrSpec string) (Layout, error) {
 	srv, root, err := spec.LoadProject(projectRootOrSpec)
 	if err != nil {
 		return Layout{}, err
 	}
+	return layoutFor(srv, root)
+}
 
+func layoutFor(srv spec.ServerSpec, root string) (Layout, error) {
 	serverDir := srv.ResolvedServerDir(root)
-	if _, err := os.Stat(serverDir); err != nil {
-		return Layout{}, fmt.Errorf("server_dir %s: %w", serverDir, err)
-	}
 
 	repoRoot := root
 	if srv.RepoRoot != "" {

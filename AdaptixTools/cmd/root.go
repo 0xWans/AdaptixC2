@@ -13,7 +13,10 @@ import (
 	"axtool/internal/spec"
 )
 
-var projectSpecPath string
+var (
+	projectSpecPath string
+	projectWorkdir  string
+)
 
 var (
 	projectOnce sync.Once
@@ -74,6 +77,7 @@ func init() {
 		return strings.TrimSpace(s)
 	})
 	rootCmd.SetUsageTemplate(usageTemplate)
+	rootCmd.PersistentFlags().StringVar(&projectWorkdir, "workdir", "", "base directory for relative paths from adaptix.spec (default: the spec directory); "+"e.g. run the daemon from a deployed tree: --workdir /opt")
 
 	rootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
 }
@@ -115,13 +119,22 @@ func loadProject() (root, srvDir string, srv spec.ServerSpec, err error) {
 			projectErr = e
 			return
 		}
+		if projectWorkdir != "" {
+			abs, ae := filepath.Abs(projectWorkdir)
+			if ae != nil {
+				projectErr = ae
+				return
+			}
+			info, se := os.Stat(abs)
+			if se != nil || !info.IsDir() {
+				projectErr = fmt.Errorf("--workdir %s: not a directory", projectWorkdir)
+				return
+			}
+			rootDir = abs
+		}
 		projectRoot = rootDir
 		projectSpec = s
 		serverDir = s.ResolvedServerDir(rootDir)
-		if _, e := os.Stat(serverDir); e != nil {
-			projectErr = fmt.Errorf("server_dir %s: %w", serverDir, e)
-			return
-		}
 	})
 	return projectRoot, serverDir, projectSpec, projectErr
 }
