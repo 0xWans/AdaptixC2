@@ -213,11 +213,25 @@ jobs:
 
           ls -lh release/
 
+      - name: Extract version from README
+        id: version
+        run: |
+          # 读取 README 第一行，提取 vX.Y 或 vX.Y.Z
+          VERSION=$(head -n 1 README.md | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+          
+          if [ -z "$VERSION" ]; then
+            echo "无法从 README 提取版本号，使用 fallback"
+            VERSION="build-${{ github.run_number }}"
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "提取到的版本号: $VERSION"
+      
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: AdaptixC2 Build #${{ github.run_number }}
+          tag_name: ${{ steps.version.outputs.version }}
+          name: AdaptixC2 ${{ steps.version.outputs.version }}
           body: |
             自动构建产物（已启用缓存）
             
