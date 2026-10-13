@@ -27,8 +27,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          key: ${{ runner.os }}-buildx-${{ hashFiles('**/Dockerfile*', '**/Makefile', '**/docker-compose*.yml') }}-${{ github.sha }}
           restore-keys: |
+            ${{ runner.os }}-buildx-${{ hashFiles('**/Dockerfile*', '**/Makefile', '**/docker-compose*.yml') }}-
             ${{ runner.os }}-buildx-
 
       - name: Build Server + Extenders
@@ -61,7 +62,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:/msys64
-          key: msys2-mingw64-qt6-${{ hashFiles('.github/workflows/build-adaptixc2.yml') }}
+          key: msys2-mingw64-qt6-${{ hashFiles('.github/workflows/build-adaptixc2.yml', 'AdaptixClient/CMakeLists.txt', 'AdaptixClient/**/*.cmake') }}
           restore-keys: |
             msys2-mingw64-qt6-
 
@@ -145,8 +146,10 @@ jobs:
         with:
           path: |
             ~/Library/Caches/Homebrew
-            /usr/local/Cellar
-            /opt/homebrew/Cellar
+            /opt/homebrew/Cellar/qt@6
+            /usr/local/Cellar/qt@6
+            /opt/homebrew/Cellar/openssl@3
+            /usr/local/Cellar/openssl@3
           key: homebrew-qt6-${{ matrix.arch }}-${{ hashFiles('.github/workflows/build-adaptixc2.yml') }}
           restore-keys: |
             homebrew-qt6-${{ matrix.arch }}-
