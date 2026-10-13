@@ -158,7 +158,7 @@ jobs:
         include:
           - os: macos-14
             arch: arm64
-          - os: macos-13          # 改回 macos-13 原生编译 x86_64，更稳定
+          - os: macos-15-intel          # 改回 macos-13 原生编译 x86_64，更稳定
             arch: x86_64
 
     steps:
