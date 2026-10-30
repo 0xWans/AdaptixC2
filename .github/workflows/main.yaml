@@ -292,12 +292,19 @@ jobs:
           
           echo "=== 检查图标是否存在 ==="
           ls -la dist-macos-${{ matrix.arch }}/AdaptixClient.app/Contents/Resources/AppIcon.icns || echo "图标文件不存在！"
+      
+      - name: Package macOS app with ditto
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "dist-macos-${{ matrix.arch }}/AdaptixClient.app" \
+            "dist-macos-${{ matrix.arch }}/AdaptixClient-macOS-${{ matrix.arch }}.zip"
+          ls -lh "dist-macos-${{ matrix.arch }}/AdaptixClient-macOS-${{ matrix.arch }}.zip"
 
       - name: Upload macOS Client
         uses: actions/upload-artifact@v4
         with:
           name: adaptix-client-macos-${{ matrix.arch }}
-          path: dist-macos-${{ matrix.arch }}/
+          path: dist-macos-${{ matrix.arch }}/AdaptixClient-macOS-${{ matrix.arch }}.zip
           retention-days: 5
 
   # ==================== 自动创建 Release ====================
