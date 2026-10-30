@@ -5,17 +5,16 @@ on:
     branches: [ testing-v2.0 ]
   pull_request:
     branches: [ testing-v2.0 ]
-  workflow_dispatch:
+  workflow_dispatch:          # 仍然支持手动触发
 
 permissions:
   contents: write
 
 jobs:
-  # ==================== Linux (只构建 Server + Extenders) ====================
+  # ==================== Linux ====================
   build-linux:
-    name: Build Linux Server + Extenders
+    name: Build Linux (Server + Extenders + Client)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -23,34 +22,37 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: network=host
-          buildkitd-flags: --allow-insecure-entitlement network.host
 
       - name: Cache Docker layers
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ hashFiles('**/Dockerfile*', '**/Makefile') }}-${{ github.sha }}
+          key: ${{ runner.os }}-buildx-${{ hashFiles('**/Dockerfile*', '**/Makefile', '**/docker-compose*.yml') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-buildx-${{ hashFiles('**/Dockerfile*', '**/Makefile') }}-
+            ${{ runner.os }}-buildx-${{ hashFiles('**/Dockerfile*', '**/Makefile', '**/docker-compose*.yml') }}-
             ${{ runner.os }}-buildx-
 
       - name: Build Server + Extenders
-        run: make docker-build-server-ext
+        run: |
+          make docker-build-server-ext
+
+      - name: Build Client
+        run: |
+          make docker-build-client
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: adaptix-linux-server
-          path: AdaptixServer/server-dist/
+          name: adaptix-linux
+          path: |
+            AdaptixServer/server-dist/
+            AdaptixClient/client-dist/
           retention-days: 5
 
   # ==================== Windows Client ====================
   build-windows-client:
     name: Build Windows Client
     runs-on: windows-latest
-    timeout-minutes: 40
 
     steps:
       - name: Checkout
@@ -60,7 +62,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:/msys64
-          key: msys2-mingw64-qt6-v1
+          key: msys2-mingw64-qt6-${{ hashFiles('.github/workflows/build-adaptixc2.yml', 'AdaptixClient/CMakeLists.txt', 'AdaptixClient/**/*.cmake') }}
           restore-keys: |
             msys2-mingw64-qt6-
 
@@ -76,6 +78,7 @@ jobs:
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-qt6
             mingw-w64-x86_64-qt6-tools
+          # 如果已经有缓存，这个步骤会快很多
 
       - name: Build Client
         shell: msys2 {0}
@@ -97,20 +100,6 @@ jobs:
           windeployqt.exe AdaptixClient.exe
           
           echo "[4/4] Add extra DLLs..."
-
-          # 用 ntldd 自动扫描 exe 实际依赖的所有 mingw64 DLL
-          pacman -S --noconfirm --needed mingw-w64-x86_64-ntldd 2>/dev/null || true
-          if command -v ntldd &> /dev/null; then
-            ntldd -R AdaptixClient.exe 2>/dev/null | \
-              grep -i "mingw64" | \
-              awk '{print $3}' | \
-              sort -u | \
-              while read -r dllpath; do
-                [ -f "$dllpath" ] && cp -n "$dllpath" . || true
-              done
-          fi
-
-          # 兜底列表
           cp /mingw64/bin/libwinpthread-1.dll . || true
           cp /mingw64/bin/libgcc_s_seh-1.dll . || true
           cp /mingw64/bin/libstdc++-6.dll . || true
@@ -118,27 +107,15 @@ jobs:
           cp /mingw64/bin/libharfbuzz-0.dll . || true
           cp /mingw64/bin/libpng16-16.dll . || true
           cp /mingw64/bin/zlib1.dll . || true
-          cp /mingw64/bin/libbrotlidec.dll . || true
-          cp /mingw64/bin/libbrotlicommon.dll . || true
-          cp /mingw64/bin/libbrotlienc.dll . || true
           cp /mingw64/bin/libpcre2-16-0.dll . || true
           cp /mingw64/bin/libpcre2-8-0.dll . || true
           cp /mingw64/bin/libintl-8.dll . || true
           cp /mingw64/bin/libiconv-2.dll . || true
-          cp /mingw64/bin/libdouble-conversion.dll . || true
-          cp /mingw64/bin/libmd4c.dll . || true
-          cp /mingw64/bin/libb2-1.dll . || true
           cp /mingw64/bin/libicuin*.dll . || true
           cp /mingw64/bin/libicuuc*.dll . || true
           cp /mingw64/bin/libicudt*.dll . || true
-          cp /mingw64/bin/libzstd.dll . || true
-          cp /mingw64/bin/libbz2-1.dll . || true
-          cp /mingw64/bin/libglib-2.0-0.dll . || true
-          cp /mingw64/bin/liblzma-5.dll . || true
-          cp /mingw64/bin/libssp-0.dll . || true
-
+          
           echo "[OK] Complete!"
-          ls -la
 
       - name: Upload Windows Client
         uses: actions/upload-artifact@v4
@@ -158,9 +135,8 @@ jobs:
         include:
           - os: macos-14
             arch: arm64
-          - os: macos-15-intel          # 改回 macos-13 原生编译 x86_64，更稳定
+          - os: macos-15-intel
             arch: x86_64
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -196,7 +172,7 @@ jobs:
           export PATH="$(brew --prefix qt@6)/bin:$PATH"
           export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
           
-          # 强制指定架构（最关键）
+          # 强制指定架构
           export CMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
           
           # 设置最低系统版本
@@ -210,15 +186,43 @@ jobs:
 
           make client-fast
 
-          echo "[Deploy] 打包成 .app bundle + macdeployqt"
+          echo "[Deploy] 打包成 .app bundle + macdeployqt + 图标"
 
           ls -la dist/
 
           BUNDLE="dist/AdaptixClient.app"
           rm -rf "$BUNDLE"
           mkdir -p "$BUNDLE/Contents/MacOS"
+          mkdir -p "$BUNDLE/Contents/Resources"
+
+          # 复制可执行文件
           cp dist/AdaptixClient "$BUNDLE/Contents/MacOS/AdaptixClient"
 
+          # ========== 生成并放入图标 ==========
+          ICON_SRC="AdaptixClient/Resources/Logo.png"
+          
+          if [ ! -f "$ICON_SRC" ]; then
+            echo "[ERROR] 找不到图标源文件: $ICON_SRC"
+            exit 1
+          fi
+
+          mkdir -p AppIcon.iconset
+          sips -z 16 16     "$ICON_SRC" --out AppIcon.iconset/icon_16x16.png
+          sips -z 32 32     "$ICON_SRC" --out AppIcon.iconset/diana.k@example.org
+          sips -z 32 32     "$ICON_SRC" --out AppIcon.iconset/icon_32x32.png
+          sips -z 64 64     "$ICON_SRC" --out AppIcon.iconset/ivan.p@example.net
+          sips -z 128 128   "$ICON_SRC" --out AppIcon.iconset/icon_128x128.png
+          sips -z 256 256   "$ICON_SRC" --out AppIcon.iconset/wendy.h@example.net
+          sips -z 256 256   "$ICON_SRC" --out AppIcon.iconset/icon_256x256.png
+          sips -z 512 512   "$ICON_SRC" --out AppIcon.iconset/wendy.h@example.net
+          sips -z 512 512   "$ICON_SRC" --out AppIcon.iconset/icon_512x512.png
+          sips -z 1024 1024 "$ICON_SRC" --out AppIcon.iconset/walt.e@example.net
+
+          iconutil -c icns AppIcon.iconset -o "$BUNDLE/Contents/Resources/AppIcon.icns"
+          rm -rf AppIcon.iconset
+          # ====================================
+
+          # 写带图标的 Info.plist
           cat > "$BUNDLE/Contents/Info.plist" << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -230,27 +234,41 @@ jobs:
               <string>com.adaptixframework.adaptixclient</string>
               <key>CFBundleName</key>
               <string>AdaptixClient</string>
+              <key>CFBundleDisplayName</key>
+              <string>AdaptixClient</string>
               <key>CFBundlePackageType</key>
               <string>APPL</string>
               <key>CFBundleShortVersionString</key>
               <string>1.0</string>
+              <key>CFBundleVersion</key>
+              <string>1.0</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
               <key>LSMinimumSystemVersion</key>
               <string>13.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
           </dict>
           </plist>
           EOF
 
+          # 部署 Qt 依赖
           macdeployqt "$BUNDLE" -always-overwrite
 
+          # 最终输出
           mkdir -p dist-macos-${{ matrix.arch }}
           cp -r "$BUNDLE" dist-macos-${{ matrix.arch }}/
           ls -la dist-macos-${{ matrix.arch }}/
+          ls -la dist-macos-${{ matrix.arch }}/AdaptixClient.app/Contents/Resources/
 
       - name: Verify architecture
         run: |
           echo "=== 检查架构 (${{ matrix.arch }}) ==="
           find dist-macos-${{ matrix.arch }} -type f -name "AdaptixClient" -exec file {} \;
           find dist-macos-${{ matrix.arch }} -type f -name "AdaptixClient" -exec lipo -info {} \; || true
+          
+          echo "=== 检查图标是否存在 ==="
+          ls -la dist-macos-${{ matrix.arch }}/AdaptixClient.app/Contents/Resources/AppIcon.icns || echo "图标文件不存在！"
 
       - name: Upload macOS Client
         uses: actions/upload-artifact@v4
@@ -264,7 +282,7 @@ jobs:
     name: Create Release
     needs: [build-linux, build-windows-client, build-macos-client]
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/testing-v2.0' && github.event_name == 'push')
+    if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
 
     steps:
       - name: Download all artifacts
@@ -276,8 +294,8 @@ jobs:
         run: |
           mkdir -p release
 
-          if [ -d artifacts/adaptix-linux-server ]; then
-            (cd artifacts/adaptix-linux-server && zip -r ../../release/AdaptixC2-Linux-Server.zip .)
+          if [ -d artifacts/adaptix-linux ]; then
+            (cd artifacts/adaptix-linux && zip -r ../../release/AdaptixC2-Linux.zip .)
           fi
 
           if [ -d artifacts/adaptix-client-windows ]; then
@@ -294,16 +312,29 @@ jobs:
 
           ls -lh release/
 
+      - name: Extract version from README
+        id: version
+        run: |
+          # 读取 README 第一行，提取 vX.Y 或 vX.Y.Z
+          VERSION=$(head -n 1 README.md | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+          
+          if [ -z "$VERSION" ]; then
+            echo "无法从 README 提取版本号，使用 fallback"
+            VERSION="build-${{ github.run_number }}"
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "提取到的版本号: $VERSION"
+      
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: AdaptixC2 Build #${{ github.run_number }} (testing-v2.0)
+          tag_name: ${{ steps.version.outputs.version }}
+          name: AdaptixC2 ${{ steps.version.outputs.version }}
           body: |
-            构建分支: `testing-v2.0`
+            自动构建产物（已启用缓存）
             
-            包含内容：
-            - **Linux**: Server + Extenders
+            - **Linux**: Server + Extenders + Client
             - **Windows**: Client
             - **macOS**: Client (ARM64 + x86_64)
           files: release/*.zip
