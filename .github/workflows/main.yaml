@@ -2,9 +2,9 @@ name: Build AdaptixC2
 
 on:
   push:
-    branches: [ main ]
+    branches: [ testing-v2.0 ]
   pull_request:
-    branches: [ main ]
+    branches: [ testing-v2.0 ]
   workflow_dispatch:
 
 permissions:
@@ -305,7 +305,7 @@ jobs:
     name: Create Release
     needs: [build-linux, build-windows-client, build-macos-client]
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/testing-v2.0' && github.event_name == 'push')
+    if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
 
     steps:
       - name: Download all artifacts
@@ -317,8 +317,8 @@ jobs:
         run: |
           mkdir -p release
 
-          if [ -d artifacts/adaptix-linux-server ]; then
-            (cd artifacts/adaptix-linux-server && zip -r ../../release/AdaptixC2-Linux-Server.zip .)
+          if [ -d artifacts/adaptix-linux ]; then
+            (cd artifacts/adaptix-linux && zip -r ../../release/AdaptixC2-Linux.zip .)
           fi
 
           if [ -d artifacts/adaptix-client-windows ]; then
@@ -335,16 +335,29 @@ jobs:
 
           ls -lh release/
 
+      - name: Extract version from README
+        id: version
+        run: |
+          # 读取 README 第一行，提取 vX.Y 或 vX.Y.Z
+          VERSION=$(head -n 1 README.md | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+          
+          if [ -z "$VERSION" ]; then
+            echo "无法从 README 提取版本号，使用 fallback"
+            VERSION="build-${{ github.run_number }}"
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "提取到的版本号: $VERSION"
+      
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: AdaptixC2 Build #${{ github.run_number }} (testing-v2.0)
+          tag_name: ${{ steps.version.outputs.version }}
+          name: AdaptixC2 ${{ steps.version.outputs.version }}
           body: |
-            构建分支: `testing-v2.0`
+            自动构建产物（已启用缓存）
             
-            包含内容：
-            - **Linux**: Server + Extenders
+            - **Linux**: Server + Extenders + Client
             - **Windows**: Client
             - **macOS**: Client (ARM64 + x86_64)
           files: release/*.zip
