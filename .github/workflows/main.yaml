@@ -19,16 +19,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           driver-opts: network=host
           buildkitd-flags: --allow-insecure-entitlement network.host
 
       - name: Cache Docker layers
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/.buildx-cache
           key: ${{ runner.os }}-buildx-${{ hashFiles('**/Dockerfile*', '**/Makefile') }}-${{ github.sha }}
@@ -40,7 +40,7 @@ jobs:
         run: make docker-build-server-ext
 
       - name: Upload Linux Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: adaptix-linux-server
           path: AdaptixServer/server-dist/
@@ -54,10 +54,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Cache MSYS2
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: C:/msys64
           key: msys2-mingw64-qt6-v1
@@ -82,20 +82,20 @@ jobs:
         working-directory: AdaptixClient
         run: |
           export PATH="/mingw64/bin:$PATH"
-          
+
           echo "[1/4] Build Release..."
           cmake -S . -B cmake-build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build cmake-build-release --config Release
-          
+
           echo "[2/4] Create dist..."
           rm -rf dist
           mkdir -p dist
           cp cmake-build-release/AdaptixClient.exe dist/
-          
+
           echo "[3/4] windeployqt..."
           cd dist
           windeployqt.exe AdaptixClient.exe
-          
+
           echo "[4/4] Add extra DLLs..."
 
           # 用 ntldd 自动扫描 exe 实际依赖的所有 mingw64 DLL
@@ -141,7 +141,7 @@ jobs:
           ls -la
 
       - name: Upload Windows Client
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: adaptix-client-windows
           path: AdaptixClient/dist/
@@ -162,10 +162,10 @@ jobs:
             arch: x86_64
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Cache Homebrew downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/Library/Caches/Homebrew
           key: brew-cache-qt6-${{ matrix.arch }}-v1
@@ -194,10 +194,10 @@ jobs:
         run: |
           export PATH="$(brew --prefix qt@6)/bin:$PATH"
           export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
-          
+
           # 强制指定架构
           export CMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
-          
+
           # 设置最低系统版本
           export MACOSX_DEPLOYMENT_TARGET=13.0
 
@@ -223,7 +223,7 @@ jobs:
 
           # ========== 生成并放入图标 ==========
           ICON_SRC="AdaptixClient/Resources/Logo.png"
-          
+
           if [ ! -f "$ICON_SRC" ]; then
             echo "[ERROR] 找不到图标源文件: $ICON_SRC"
             exit 1
@@ -231,15 +231,15 @@ jobs:
 
           mkdir -p AppIcon.iconset
           sips -z 16 16     "$ICON_SRC" --out AppIcon.iconset/icon_16x16.png
-          sips -z 32 32     "$ICON_SRC" --out AppIcon.iconset/diana.k@example.org
+          sips -z 32 32     "$ICON_SRC" --out AppIcon.iconset/icon_16x16@2x.png
           sips -z 32 32     "$ICON_SRC" --out AppIcon.iconset/icon_32x32.png
-          sips -z 64 64     "$ICON_SRC" --out AppIcon.iconset/ivan.p@example.net
+          sips -z 64 64     "$ICON_SRC" --out AppIcon.iconset/icon_32x32@2x.png
           sips -z 128 128   "$ICON_SRC" --out AppIcon.iconset/icon_128x128.png
-          sips -z 256 256   "$ICON_SRC" --out AppIcon.iconset/wendy.h@example.net
+          sips -z 256 256   "$ICON_SRC" --out AppIcon.iconset/icon_128x128@2x.png
           sips -z 256 256   "$ICON_SRC" --out AppIcon.iconset/icon_256x256.png
-          sips -z 512 512   "$ICON_SRC" --out AppIcon.iconset/wendy.h@example.net
+          sips -z 512 512   "$ICON_SRC" --out AppIcon.iconset/icon_256x256@2x.png
           sips -z 512 512   "$ICON_SRC" --out AppIcon.iconset/icon_512x512.png
-          sips -z 1024 1024 "$ICON_SRC" --out AppIcon.iconset/walt.e@example.net
+          sips -z 1024 1024 "$ICON_SRC" --out AppIcon.iconset/icon_512x512@2x.png
 
           iconutil -c icns AppIcon.iconset -o "$BUNDLE/Contents/Resources/AppIcon.icns"
           rm -rf AppIcon.iconset
@@ -289,10 +289,10 @@ jobs:
           echo "=== 检查架构 (${{ matrix.arch }}) ==="
           find dist-macos-${{ matrix.arch }} -type f -name "AdaptixClient" -exec file {} \;
           find dist-macos-${{ matrix.arch }} -type f -name "AdaptixClient" -exec lipo -info {} \; || true
-          
+
           echo "=== 检查图标是否存在 ==="
           ls -la dist-macos-${{ matrix.arch }}/AdaptixClient.app/Contents/Resources/AppIcon.icns || echo "图标文件不存在！"
-      
+
       - name: Package macOS app with ditto
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
@@ -301,7 +301,7 @@ jobs:
           ls -lh "dist-macos-${{ matrix.arch }}/AdaptixClient-macOS-${{ matrix.arch }}.zip"
 
       - name: Upload macOS Client
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: adaptix-client-macos-${{ matrix.arch }}
           path: dist-macos-${{ matrix.arch }}/AdaptixClient-macOS-${{ matrix.arch }}.zip
@@ -315,6 +315,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -324,8 +327,8 @@ jobs:
         run: |
           mkdir -p release
 
-          if [ -d artifacts/adaptix-linux ]; then
-            (cd artifacts/adaptix-linux && zip -r ../../release/AdaptixC2-Linux.zip .)
+          if [ -d artifacts/adaptix-linux-server ]; then
+            (cd artifacts/adaptix-linux-server && zip -r ../../release/AdaptixC2-Linux.zip .)
           fi
 
           if [ -d artifacts/adaptix-client-windows ]; then
@@ -347,15 +350,15 @@ jobs:
         run: |
           # 读取 README 第一行，提取 vX.Y 或 vX.Y.Z
           VERSION=$(head -n 1 README.md | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-          
+
           if [ -z "$VERSION" ]; then
             echo "无法从 README 提取版本号，使用 fallback"
             VERSION="build-${{ github.run_number }}"
           fi
-          
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "提取到的版本号: $VERSION"
-      
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -363,8 +366,8 @@ jobs:
           name: AdaptixC2 ${{ steps.version.outputs.version }}
           body: |
             自动构建产物（已启用缓存）
-            
-            - **Linux**: Server + Extenders + Client
+
+            - **Linux**: Server + Extenders
             - **Windows**: Client
             - **macOS**: Client (ARM64 + x86_64)
           files: release/*.zip
