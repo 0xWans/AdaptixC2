@@ -156,7 +156,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15
+          - os: macos-14
             arch: arm64
           - os: macos-15-intel
             arch: x86_64
@@ -335,12 +335,14 @@ jobs:
             (cd artifacts/adaptix-client-windows && zip -r ../../release/AdaptixClient-Windows.zip .)
           fi
 
+          # macOS 产物在 build 阶段已经用 ditto 打成了 zip（内含 .app），
+          # 这里直接拷贝那个 zip，不要再对目录执行 zip -r，否则会变成“zip 套 zip”，
           if [ -d artifacts/adaptix-client-macos-arm64 ]; then
-            (cd artifacts/adaptix-client-macos-arm64 && zip -r ../../release/AdaptixClient-macOS-arm64.zip .)
+            cp artifacts/adaptix-client-macos-arm64/*.zip release/
           fi
 
           if [ -d artifacts/adaptix-client-macos-x86_64 ]; then
-            (cd artifacts/adaptix-client-macos-x86_64 && zip -r ../../release/AdaptixClient-macOS-x86_64.zip .)
+            cp artifacts/adaptix-client-macos-x86_64/*.zip release/
           fi
 
           ls -lh release/
