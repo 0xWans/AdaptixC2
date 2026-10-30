@@ -128,48 +128,147 @@ jobs:
   build-macos-client:
     name: Build macOS Client (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-14
             arch: arm64
-          - os: macos-13
+          - os: macos-15-intel
             arch: x86_64
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache Homebrew
+      - name: Cache Homebrew downloads
         uses: actions/cache@v4
         with:
-          path: |
-            ~/Library/Caches/Homebrew
-            /opt/homebrew/Cellar/qt@6
-            /usr/local/Cellar/qt@6
-            /opt/homebrew/Cellar/openssl@3
-            /usr/local/Cellar/openssl@3
-          key: homebrew-qt6-${{ matrix.arch }}-${{ hashFiles('.github/workflows/build-adaptixc2.yml') }}
+          path: ~/Library/Caches/Homebrew
+          key: brew-cache-qt6-${{ matrix.arch }}-v1
           restore-keys: |
-            homebrew-qt6-${{ matrix.arch }}-
+            brew-cache-qt6-${{ matrix.arch }}-
 
       - name: Install dependencies
         run: |
-          brew update
-          brew install make cmake openssl qt@6 || true
-          # 如果缓存命中，安装会很快
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_INSTALL_CLEANUP=1
+          brew install make cmake openssl qt@6
+
+          echo "=== Qt@6 安装路径 ==="
+          brew --prefix qt@6
+          ls "$(brew --prefix qt@6)/lib/cmake/Qt6/" || true
+
+      - name: Verify brew qt@6 detection
+        run: |
+          if ! brew --prefix qt@6 > /dev/null 2>&1; then
+            echo "[ERROR] brew --prefix qt@6 检测失败，尝试重新 link"
+            brew link --force qt@6 || brew link --overwrite qt@6
+            brew --prefix qt@6
+          fi
 
       - name: Build Client
         run: |
           export PATH="$(brew --prefix qt@6)/bin:$PATH"
           export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
           
-          make client-fast
+          # 强制指定架构
+          export CMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
           
+          # 设置最低系统版本
+          export MACOSX_DEPLOYMENT_TARGET=13.0
+
+          echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
+          echo "CMAKE_OSX_ARCHITECTURES=$CMAKE_OSX_ARCHITECTURES"
+          echo "MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
+          which qmake
+          qmake --version || true
+
+          make client-fast
+
+          echo "[Deploy] 打包成 .app bundle + macdeployqt + 图标"
+
+          ls -la dist/
+
+          BUNDLE="dist/AdaptixClient.app"
+          rm -rf "$BUNDLE"
+          mkdir -p "$BUNDLE/Contents/MacOS"
+          mkdir -p "$BUNDLE/Contents/Resources"
+
+          # 复制可执行文件
+          cp dist/AdaptixClient "$BUNDLE/Contents/MacOS/AdaptixClient"
+
+          # ========== 生成并放入图标 ==========
+          ICON_SRC="AdaptixClient/Resources/Logo.png"
+          
+          if [ ! -f "$ICON_SRC" ]; then
+            echo "[ERROR] 找不到图标源文件: $ICON_SRC"
+            exit 1
+          fi
+
+          mkdir -p AppIcon.iconset
+          sips -z 16 16     "$ICON_SRC" --out AppIcon.iconset/icon_16x16.png
+          sips -z 32 32     "$ICON_SRC" --out AppIcon.iconset/diana.k@example.org
+          sips -z 32 32     "$ICON_SRC" --out AppIcon.iconset/icon_32x32.png
+          sips -z 64 64     "$ICON_SRC" --out AppIcon.iconset/ivan.p@example.net
+          sips -z 128 128   "$ICON_SRC" --out AppIcon.iconset/icon_128x128.png
+          sips -z 256 256   "$ICON_SRC" --out AppIcon.iconset/wendy.h@example.net
+          sips -z 256 256   "$ICON_SRC" --out AppIcon.iconset/icon_256x256.png
+          sips -z 512 512   "$ICON_SRC" --out AppIcon.iconset/wendy.h@example.net
+          sips -z 512 512   "$ICON_SRC" --out AppIcon.iconset/icon_512x512.png
+          sips -z 1024 1024 "$ICON_SRC" --out AppIcon.iconset/walt.e@example.net
+
+          iconutil -c icns AppIcon.iconset -o "$BUNDLE/Contents/Resources/AppIcon.icns"
+          rm -rf AppIcon.iconset
+          # ====================================
+
+          # 写带图标的 Info.plist
+          cat > "$BUNDLE/Contents/Info.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>AdaptixClient</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.adaptixframework.adaptixclient</string>
+              <key>CFBundleName</key>
+              <string>AdaptixClient</string>
+              <key>CFBundleDisplayName</key>
+              <string>AdaptixClient</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundleVersion</key>
+              <string>1.0</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>13.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+          # 部署 Qt 依赖
+          macdeployqt "$BUNDLE" -always-overwrite
+
+          # 最终输出
           mkdir -p dist-macos-${{ matrix.arch }}
-          cp -r dist/* dist-macos-${{ matrix.arch }}/ 2>/dev/null || true
-          cp -r AdaptixClient/AdaptixClient.app dist-macos-${{ matrix.arch }}/ 2>/dev/null || true
+          cp -r "$BUNDLE" dist-macos-${{ matrix.arch }}/
+          ls -la dist-macos-${{ matrix.arch }}/
+          ls -la dist-macos-${{ matrix.arch }}/AdaptixClient.app/Contents/Resources/
+
+      - name: Verify architecture
+        run: |
+          echo "=== 检查架构 (${{ matrix.arch }}) ==="
+          find dist-macos-${{ matrix.arch }} -type f -name "AdaptixClient" -exec file {} \;
+          find dist-macos-${{ matrix.arch }} -type f -name "AdaptixClient" -exec lipo -info {} \; || true
+          
+          echo "=== 检查图标是否存在 ==="
+          ls -la dist-macos-${{ matrix.arch }}/AdaptixClient.app/Contents/Resources/AppIcon.icns || echo "图标文件不存在！"
 
       - name: Upload macOS Client
         uses: actions/upload-artifact@v4
